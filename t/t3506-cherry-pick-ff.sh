@@ -64,10 +64,10 @@ test_expect_success 'merge setup' '
 	git checkout -b new A
 '
 
-test_expect_success 'cherry-pick a non-merge with --ff and -m should fail' '
+test_expect_success 'cherry-pick explicit first parent of a non-merge with --ff' '
 	git reset --hard A -- &&
-	test_must_fail git cherry-pick --ff -m 1 B &&
-	git diff --exit-code A --
+	git cherry-pick --ff -m 1 B &&
+	git diff --exit-code C --
 '
 
 test_expect_success 'cherry pick a merge with --ff but without -m should fail' '
@@ -103,6 +103,14 @@ test_expect_success 'cherry pick a root commit with --ff' '
 	git commit --amend -m "file2" &&
 	git cherry-pick --ff first &&
 	test "$(git rev-parse --verify HEAD)" = "1df192cd8bc58a2b275d842cede4d221ad9000d1"
+'
+
+test_expect_success 'cherry-pick --ff on unborn branch' '
+	git checkout --orphan unborn &&
+	git rm --cached -r . &&
+	rm -rf * &&
+	git cherry-pick --ff first &&
+	test_cmp_rev first HEAD
 '
 
 test_done

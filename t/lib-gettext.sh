@@ -1,4 +1,5 @@
-#!/bin/sh
+# Initialization and Icelandic locale for basic git i18n tests,
+# which source this scriptlet instead of ./test-lib.sh.
 #
 # Copyright (c) 2010 Ævar Arnfjörð Bjarmason
 #
@@ -9,17 +10,24 @@ GIT_TEXTDOMAINDIR="$GIT_BUILD_DIR/po/build/locale"
 GIT_PO_PATH="$GIT_BUILD_DIR/po"
 export GIT_TEXTDOMAINDIR GIT_PO_PATH
 
-. "$GIT_BUILD_DIR"/git-sh-i18n
+if test -n "$GIT_TEST_INSTALLED"
+then
+	. "$(git --exec-path)"/git-sh-i18n
+else
+	. "$GIT_BUILD_DIR"/git-sh-i18n
+fi
 
-if test_have_prereq GETTEXT && ! test_have_prereq GETTEXT_POISON
+if test_have_prereq GETTEXT && test_have_prereq C_LOCALE_OUTPUT
 then
 	# is_IS.UTF-8 on Solaris and FreeBSD, is_IS.utf8 on Debian
-	is_IS_locale=$(locale -a | sed -n '/^is_IS\.[uU][tT][fF]-*8$/{
+	is_IS_locale=$(locale -a 2>/dev/null |
+		sed -n '/^is_IS\.[uU][tT][fF]-*8$/{
 		p
 		q
 	}')
 	# is_IS.ISO8859-1 on Solaris and FreeBSD, is_IS.iso88591 on Debian
-	is_IS_iso_locale=$(locale -a | sed -n '/^is_IS\.[iI][sS][oO]8859-*1$/{
+	is_IS_iso_locale=$(locale -a 2>/dev/null |
+		sed -n '/^is_IS\.[iI][sS][oO]8859-*1$/{
 		p
 		q
 	}')
