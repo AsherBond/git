@@ -8,31 +8,39 @@
  * published by the Free Software Foundation.
  */
 
-#include "git-compat-util.h"
+#include "cache.h"
+#include "gettext.h"
 #include "progress.h"
+#include "strbuf.h"
+#include "trace.h"
+#include "utf8.h"
 
 #define TP_IDX_MAX      8
 
 struct throughput {
 	off_t curr_total;
 	off_t prev_total;
-	struct timeval prev_tv;
+	uint64_t prev_ns;
 	unsigned int avg_bytes;
 	unsigned int avg_misecs;
 	unsigned int last_bytes[TP_IDX_MAX];
 	unsigned int last_misecs[TP_IDX_MAX];
 	unsigned int idx;
-	char display[32];
+	struct strbuf display;
 };
 
 struct progress {
 	const char *title;
-	int last_value;
-	unsigned total;
+	uint64_t last_value;
+	uint64_t total;
 	unsigned last_percent;
 	unsigned delay;
-	unsigned delayed_percent_treshold;
+	unsigned sparse;
 	struct throughput *throughput;
+	uint64_t start_ns;
+	struct strbuf counters_sb;
+	int title_len;
+	int split;
 };
 
 static volatile sig_atomic_t progress_update;
@@ -69,174 +77,204 @@ static void clear_progress_signal(void)
 	progress_update = 0;
 }
 
-static int display(struct progress *progress, unsigned n, const char *done)
+static int is_foreground_fd(int fd)
 {
-	const char *eol, *tp;
+	int tpgrp = tcgetpgrp(fd);
+	return tpgrp < 0 || tpgrp == getpgid(0);
+}
 
-	if (progress->delay) {
-		if (!progress_update || --progress->delay)
-			return 0;
-		if (progress->total) {
-			unsigned percent = n * 100 / progress->total;
-			if (percent > progress->delayed_percent_treshold) {
-				/* inhibit this progress report entirely */
-				clear_progress_signal();
-				progress->delay = -1;
-				progress->total = 0;
-				return 0;
-			}
-		}
-	}
+static void display(struct progress *progress, uint64_t n, const char *done)
+{
+	const char *tp;
+	struct strbuf *counters_sb = &progress->counters_sb;
+	int show_update = 0;
+
+	if (progress->delay && (!progress_update || --progress->delay))
+		return;
 
 	progress->last_value = n;
-	tp = (progress->throughput) ? progress->throughput->display : "";
-	eol = done ? done : "   \r";
+	tp = (progress->throughput) ? progress->throughput->display.buf : "";
 	if (progress->total) {
 		unsigned percent = n * 100 / progress->total;
 		if (percent != progress->last_percent || progress_update) {
 			progress->last_percent = percent;
-			fprintf(stderr, "%s: %3u%% (%u/%u)%s%s",
-				progress->title, percent, n,
-				progress->total, tp, eol);
-			fflush(stderr);
-			progress_update = 0;
-			return 1;
+
+			strbuf_reset(counters_sb);
+			strbuf_addf(counters_sb,
+				    "%3u%% (%"PRIuMAX"/%"PRIuMAX")%s", percent,
+				    (uintmax_t)n, (uintmax_t)progress->total,
+				    tp);
+			show_update = 1;
 		}
 	} else if (progress_update) {
-		fprintf(stderr, "%s: %u%s%s", progress->title, n, tp, eol);
-		fflush(stderr);
-		progress_update = 0;
-		return 1;
+		strbuf_reset(counters_sb);
+		strbuf_addf(counters_sb, "%"PRIuMAX"%s", (uintmax_t)n, tp);
+		show_update = 1;
 	}
 
-	return 0;
+	if (show_update) {
+		if (is_foreground_fd(fileno(stderr)) || done) {
+			const char *eol = done ? done : "\r";
+
+			term_clear_line();
+			if (progress->split) {
+				fprintf(stderr, "  %s%s", counters_sb->buf,
+					eol);
+			} else if (!done &&
+				   /* The "+ 2" accounts for the ": ". */
+				   term_columns() < progress->title_len +
+						    counters_sb->len + 2) {
+				fprintf(stderr, "%s:\n  %s%s",
+					progress->title, counters_sb->buf, eol);
+				progress->split = 1;
+			} else {
+				fprintf(stderr, "%s: %s%s", progress->title,
+					counters_sb->buf, eol);
+			}
+			fflush(stderr);
+		}
+		progress_update = 0;
+	}
 }
 
-static void throughput_string(struct throughput *tp, off_t total,
+static void throughput_string(struct strbuf *buf, uint64_t total,
 			      unsigned int rate)
 {
-	int l = sizeof(tp->display);
-	if (total > 1 << 30) {
-		l -= snprintf(tp->display, l, ", %u.%2.2u GiB",
-			      (int)(total >> 30),
-			      (int)(total & ((1 << 30) - 1)) / 10737419);
-	} else if (total > 1 << 20) {
-		int x = total + 5243;  /* for rounding */
-		l -= snprintf(tp->display, l, ", %u.%2.2u MiB",
-			      x >> 20, ((x & ((1 << 20) - 1)) * 100) >> 20);
-	} else if (total > 1 << 10) {
-		int x = total + 5;  /* for rounding */
-		l -= snprintf(tp->display, l, ", %u.%2.2u KiB",
-			      x >> 10, ((x & ((1 << 10) - 1)) * 100) >> 10);
-	} else {
-		l -= snprintf(tp->display, l, ", %u bytes", (int)total);
-	}
-
-	if (rate > 1 << 10) {
-		int x = rate + 5;  /* for rounding */
-		snprintf(tp->display + sizeof(tp->display) - l, l,
-			 " | %u.%2.2u MiB/s",
-			 x >> 10, ((x & ((1 << 10) - 1)) * 100) >> 10);
-	} else if (rate)
-		snprintf(tp->display + sizeof(tp->display) - l, l,
-			 " | %u KiB/s", rate);
+	strbuf_reset(buf);
+	strbuf_addstr(buf, ", ");
+	strbuf_humanise_bytes(buf, total);
+	strbuf_addstr(buf, " | ");
+	strbuf_humanise_rate(buf, rate * 1024);
 }
 
-void display_throughput(struct progress *progress, off_t total)
+void display_throughput(struct progress *progress, uint64_t total)
 {
 	struct throughput *tp;
-	struct timeval tv;
-	unsigned int misecs;
+	uint64_t now_ns;
+	unsigned int misecs, count, rate;
 
 	if (!progress)
 		return;
 	tp = progress->throughput;
 
-	gettimeofday(&tv, NULL);
+	now_ns = getnanotime();
 
 	if (!tp) {
-		progress->throughput = tp = calloc(1, sizeof(*tp));
-		if (tp) {
-			tp->prev_total = tp->curr_total = total;
-			tp->prev_tv = tv;
-		}
+		progress->throughput = tp = xcalloc(1, sizeof(*tp));
+		tp->prev_total = tp->curr_total = total;
+		tp->prev_ns = now_ns;
+		strbuf_init(&tp->display, 0);
 		return;
 	}
 	tp->curr_total = total;
 
+	/* only update throughput every 0.5 s */
+	if (now_ns - tp->prev_ns <= 500000000)
+		return;
+
 	/*
-	 * We have x = bytes and y = microsecs.  We want z = KiB/s:
+	 * We have x = bytes and y = nanosecs.  We want z = KiB/s:
 	 *
-	 *	z = (x / 1024) / (y / 1000000)
-	 *	z = x / y * 1000000 / 1024
-	 *	z = x / (y * 1024 / 1000000)
+	 *	z = (x / 1024) / (y / 1000000000)
+	 *	z = x / y * 1000000000 / 1024
+	 *	z = x / (y * 1024 / 1000000000)
 	 *	z = x / y'
 	 *
 	 * To simplify things we'll keep track of misecs, or 1024th of a sec
 	 * obtained with:
 	 *
-	 *	y' = y * 1024 / 1000000
-	 *	y' = y / (1000000 / 1024)
-	 *	y' = y / 977
+	 *	y' = y * 1024 / 1000000000
+	 *	y' = y * (2^10 / 2^42) * (2^42 / 1000000000)
+	 *	y' = y / 2^32 * 4398
+	 *	y' = (y * 4398) >> 32
 	 */
-	misecs = (tv.tv_sec - tp->prev_tv.tv_sec) * 1024;
-	misecs += (int)(tv.tv_usec - tp->prev_tv.tv_usec) / 977;
+	misecs = ((now_ns - tp->prev_ns) * 4398) >> 32;
 
-	if (misecs > 512) {
-		unsigned int count, rate;
+	count = total - tp->prev_total;
+	tp->prev_total = total;
+	tp->prev_ns = now_ns;
+	tp->avg_bytes += count;
+	tp->avg_misecs += misecs;
+	rate = tp->avg_bytes / tp->avg_misecs;
+	tp->avg_bytes -= tp->last_bytes[tp->idx];
+	tp->avg_misecs -= tp->last_misecs[tp->idx];
+	tp->last_bytes[tp->idx] = count;
+	tp->last_misecs[tp->idx] = misecs;
+	tp->idx = (tp->idx + 1) % TP_IDX_MAX;
 
-		count = total - tp->prev_total;
-		tp->prev_total = total;
-		tp->prev_tv = tv;
-		tp->avg_bytes += count;
-		tp->avg_misecs += misecs;
-		rate = tp->avg_bytes / tp->avg_misecs;
-		tp->avg_bytes -= tp->last_bytes[tp->idx];
-		tp->avg_misecs -= tp->last_misecs[tp->idx];
-		tp->last_bytes[tp->idx] = count;
-		tp->last_misecs[tp->idx] = misecs;
-		tp->idx = (tp->idx + 1) % TP_IDX_MAX;
-
-		throughput_string(tp, total, rate);
-		if (progress->last_value != -1 && progress_update)
-			display(progress, progress->last_value, NULL);
-	}
+	throughput_string(&tp->display, total, rate);
+	if (progress->last_value != -1 && progress_update)
+		display(progress, progress->last_value, NULL);
 }
 
-int display_progress(struct progress *progress, unsigned n)
+void display_progress(struct progress *progress, uint64_t n)
 {
-	return progress ? display(progress, n, NULL) : 0;
+	if (progress)
+		display(progress, n, NULL);
 }
 
-struct progress *start_progress_delay(const char *title, unsigned total,
-				       unsigned percent_treshold, unsigned delay)
+static struct progress *start_progress_delay(const char *title, uint64_t total,
+					     unsigned delay, unsigned sparse)
 {
-	struct progress *progress = malloc(sizeof(*progress));
-	if (!progress) {
-		/* unlikely, but here's a good fallback */
-		fprintf(stderr, "%s...\n", title);
-		fflush(stderr);
-		return NULL;
-	}
+	struct progress *progress = xmalloc(sizeof(*progress));
 	progress->title = title;
 	progress->total = total;
 	progress->last_value = -1;
 	progress->last_percent = -1;
-	progress->delayed_percent_treshold = percent_treshold;
 	progress->delay = delay;
+	progress->sparse = sparse;
 	progress->throughput = NULL;
+	progress->start_ns = getnanotime();
+	strbuf_init(&progress->counters_sb, 0);
+	progress->title_len = utf8_strwidth(title);
+	progress->split = 0;
 	set_progress_signal();
 	return progress;
 }
 
-struct progress *start_progress(const char *title, unsigned total)
+struct progress *start_delayed_progress(const char *title, uint64_t total)
+{
+	return start_progress_delay(title, total, 2, 0);
+}
+
+struct progress *start_progress(const char *title, uint64_t total)
 {
 	return start_progress_delay(title, total, 0, 0);
 }
 
+/*
+ * Here "sparse" means that the caller might use some sampling criteria to
+ * decide when to call display_progress() rather than calling it for every
+ * integer value in[0 .. total).  In particular, the caller might not call
+ * display_progress() for the last value in the range.
+ *
+ * When "sparse" is set, stop_progress() will automatically force the done
+ * message to show 100%.
+ */
+struct progress *start_sparse_progress(const char *title, uint64_t total)
+{
+	return start_progress_delay(title, total, 0, 1);
+}
+
+struct progress *start_delayed_sparse_progress(const char *title,
+					       uint64_t total)
+{
+	return start_progress_delay(title, total, 2, 1);
+}
+
+static void finish_if_sparse(struct progress *progress)
+{
+	if (progress &&
+	    progress->sparse &&
+	    progress->last_value != progress->total)
+		display_progress(progress, progress->total);
+}
+
 void stop_progress(struct progress **p_progress)
 {
-	stop_progress_msg(p_progress, "done");
+	finish_if_sparse(*p_progress);
+
+	stop_progress_msg(p_progress, _("done"));
 }
 
 void stop_progress_msg(struct progress **p_progress, const char *msg)
@@ -247,23 +285,25 @@ void stop_progress_msg(struct progress **p_progress, const char *msg)
 	*p_progress = NULL;
 	if (progress->last_value != -1) {
 		/* Force the last update */
-		char buf[128], *bufp;
-		size_t len = strlen(msg) + 5;
+		char *buf;
 		struct throughput *tp = progress->throughput;
 
-		bufp = (len < sizeof(buf)) ? buf : xmalloc(len + 1);
 		if (tp) {
-			unsigned int rate = !tp->avg_misecs ? 0 :
-					tp->avg_bytes / tp->avg_misecs;
-			throughput_string(tp, tp->curr_total, rate);
+			uint64_t now_ns = getnanotime();
+			unsigned int misecs, rate;
+			misecs = ((now_ns - progress->start_ns) * 4398) >> 32;
+			rate = tp->curr_total / (misecs ? misecs : 1);
+			throughput_string(&tp->display, tp->curr_total, rate);
 		}
 		progress_update = 1;
-		sprintf(bufp, ", %s.\n", msg);
-		display(progress, progress->last_value, bufp);
-		if (buf != bufp)
-			free(bufp);
+		buf = xstrfmt(", %s.\n", msg);
+		display(progress, progress->last_value, buf);
+		free(buf);
 	}
 	clear_progress_signal();
+	strbuf_release(&progress->counters_sb);
+	if (progress->throughput)
+		strbuf_release(&progress->throughput->display);
 	free(progress->throughput);
 	free(progress);
 }

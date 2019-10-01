@@ -35,15 +35,10 @@ test_expect_success 'many notes created with git-notes triggers fanout' '
 	git ls-tree -r --name-only refs/notes/commits |
 	while read path
 	do
-		case "$path" in
-		??/??????????????????????????????????????)
-			: true
-			;;
-		*)
+		echo $path | grep "^../[0-9a-f]*$" || {
 			echo "Invalid path \"$path\"" &&
-			return 1
-			;;
-		esac
+			return 1;
+		}
 	done
 '
 
@@ -51,15 +46,12 @@ test_expect_success 'deleting most notes with git-notes' '
 	num_notes=250 &&
 	i=0 &&
 	git rev-list HEAD |
-	while read sha1
+	while test $i -lt $num_notes && read sha1
 	do
 		i=$(($i + 1)) &&
-		if test $i -gt $num_notes
-		then
-			break
-		fi &&
 		test_tick &&
-		git notes remove "$sha1"
+		git notes remove "$sha1" ||
+		exit 1
 	done
 '
 
@@ -80,15 +72,10 @@ test_expect_success 'deleting most notes triggers fanout consolidation' '
 	git ls-tree -r --name-only refs/notes/commits |
 	while read path
 	do
-		case "$path" in
-		????????????????????????????????????????)
-			: true
-			;;
-		*)
+		echo $path | grep -v "^../.*" || {
 			echo "Invalid path \"$path\"" &&
-			return 1
-			;;
-		esac
+			return 1;
+		}
 	done
 '
 

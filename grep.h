@@ -1,15 +1,42 @@
 #ifndef GREP_H
 #define GREP_H
 #include "color.h"
-#ifdef USE_LIBPCRE
+#ifdef USE_LIBPCRE1
 #include <pcre.h>
+#ifdef PCRE_CONFIG_JIT
+#if PCRE_MAJOR >= 8 && PCRE_MINOR >= 32
+#ifndef NO_LIBPCRE1_JIT
+#define GIT_PCRE1_USE_JIT
+#define GIT_PCRE_STUDY_JIT_COMPILE PCRE_STUDY_JIT_COMPILE
+#endif
+#endif
+#endif
+#ifndef GIT_PCRE_STUDY_JIT_COMPILE
+#define GIT_PCRE_STUDY_JIT_COMPILE 0
+#endif
+#if PCRE_MAJOR <= 8 && PCRE_MINOR < 20
+typedef int pcre_jit_stack;
+#endif
 #else
 typedef int pcre;
 typedef int pcre_extra;
+typedef int pcre_jit_stack;
+#endif
+#ifdef USE_LIBPCRE2
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+#else
+typedef int pcre2_code;
+typedef int pcre2_match_data;
+typedef int pcre2_compile_context;
+typedef int pcre2_match_context;
+typedef int pcre2_jit_stack;
 #endif
 #include "kwset.h"
 #include "thread-utils.h"
 #include "userdiff.h"
+
+struct repository;
 
 enum grep_pat_token {
 	GREP_PATTERN,
@@ -28,22 +55,48 @@ enum grep_context {
 };
 
 enum grep_header_field {
-	GREP_HEADER_AUTHOR = 0,
-	GREP_HEADER_COMMITTER
+	GREP_HEADER_FIELD_MIN = 0,
+	GREP_HEADER_AUTHOR = GREP_HEADER_FIELD_MIN,
+	GREP_HEADER_COMMITTER,
+	GREP_HEADER_REFLOG,
+
+	/* Must be at the end of the enum */
+	GREP_HEADER_FIELD_MAX
 };
-#define GREP_HEADER_FIELD_MAX (GREP_HEADER_COMMITTER + 1)
+
+enum grep_color {
+	GREP_COLOR_CONTEXT,
+	GREP_COLOR_FILENAME,
+	GREP_COLOR_FUNCTION,
+	GREP_COLOR_LINENO,
+	GREP_COLOR_COLUMNNO,
+	GREP_COLOR_MATCH_CONTEXT,
+	GREP_COLOR_MATCH_SELECTED,
+	GREP_COLOR_SELECTED,
+	GREP_COLOR_SEP,
+	NR_GREP_COLORS
+};
 
 struct grep_pat {
 	struct grep_pat *next;
 	const char *origin;
 	int no;
 	enum grep_pat_token token;
-	const char *pattern;
+	char *pattern;
 	size_t patternlen;
 	enum grep_header_field field;
 	regex_t regexp;
-	pcre *pcre_regexp;
-	pcre_extra *pcre_extra_info;
+	pcre *pcre1_regexp;
+	pcre_extra *pcre1_extra_info;
+	pcre_jit_stack *pcre1_jit_stack;
+	const unsigned char *pcre1_tables;
+	int pcre1_jit_on;
+	pcre2_code *pcre2_pattern;
+	pcre2_match_data *pcre2_match_data;
+	pcre2_compile_context *pcre2_compile_context;
+	pcre2_match_context *pcre2_match_context;
+	pcre2_jit_stack *pcre2_jit_stack;
+	uint32_t pcre2_jit_on;
 	kwset_t kws;
 	unsigned fixed:1;
 	unsigned ignore_case:1;
@@ -56,6 +109,14 @@ enum grep_expr_node {
 	GREP_NODE_AND,
 	GREP_NODE_TRUE,
 	GREP_NODE_OR
+};
+
+enum grep_pattern_type {
+	GREP_PATTERN_TYPE_UNSPECIFIED = 0,
+	GREP_PATTERN_TYPE_BRE,
+	GREP_PATTERN_TYPE_ERE,
+	GREP_PATTERN_TYPE_FIXED,
+	GREP_PATTERN_TYPE_PCRE
 };
 
 struct grep_expr {
@@ -77,10 +138,12 @@ struct grep_opt {
 	struct grep_pat *header_list;
 	struct grep_pat **header_tail;
 	struct grep_expr *pattern_expression;
+	struct repository *repo;
 	const char *prefix;
 	int prefix_length;
 	regex_t regexp;
 	int linenum;
+	int columnnum;
 	int invert;
 	int ignore_case;
 	int status_only;
@@ -90,27 +153,27 @@ struct grep_opt {
 	int word_regexp;
 	int fixed;
 	int all_match;
+	int debug;
 #define GREP_BINARY_DEFAULT	0
 #define GREP_BINARY_NOMATCH	1
 #define GREP_BINARY_TEXT	2
 	int binary;
+	int allow_textconv;
 	int extended;
-	int pcre;
+	int use_reflog_filter;
+	int pcre1;
+	int pcre2;
 	int relative;
 	int pathname;
 	int null_following_name;
+	int only_matching;
 	int color;
 	int max_depth;
 	int funcname;
 	int funcbody;
-	char color_context[COLOR_MAXLEN];
-	char color_filename[COLOR_MAXLEN];
-	char color_function[COLOR_MAXLEN];
-	char color_lineno[COLOR_MAXLEN];
-	char color_match[COLOR_MAXLEN];
-	char color_selected[COLOR_MAXLEN];
-	char color_sep[COLOR_MAXLEN];
-	int regflags;
+	int extended_regexp_option;
+	int pattern_type_option;
+	char colors[NR_GREP_COLORS][COLOR_MAXLEN];
 	unsigned pre_context;
 	unsigned post_context;
 	unsigned last_shown;
@@ -123,18 +186,23 @@ struct grep_opt {
 	void *output_priv;
 };
 
-extern void append_grep_pat(struct grep_opt *opt, const char *pat, size_t patlen, const char *origin, int no, enum grep_pat_token t);
-extern void append_grep_pattern(struct grep_opt *opt, const char *pat, const char *origin, int no, enum grep_pat_token t);
-extern void append_header_grep_pattern(struct grep_opt *, enum grep_header_field, const char *);
-extern void compile_grep_patterns(struct grep_opt *opt);
-extern void free_grep_patterns(struct grep_opt *opt);
-extern int grep_buffer(struct grep_opt *opt, char *buf, unsigned long size);
+void init_grep_defaults(struct repository *);
+int grep_config(const char *var, const char *value, void *);
+void grep_init(struct grep_opt *, struct repository *repo, const char *prefix);
+void grep_commit_pattern_type(enum grep_pattern_type, struct grep_opt *opt);
+
+void append_grep_pat(struct grep_opt *opt, const char *pat, size_t patlen, const char *origin, int no, enum grep_pat_token t);
+void append_grep_pattern(struct grep_opt *opt, const char *pat, const char *origin, int no, enum grep_pat_token t);
+void append_header_grep_pattern(struct grep_opt *, enum grep_header_field, const char *);
+void compile_grep_patterns(struct grep_opt *opt);
+void free_grep_patterns(struct grep_opt *opt);
+int grep_buffer(struct grep_opt *opt, char *buf, unsigned long size);
 
 struct grep_source {
 	char *name;
 
 	enum grep_source_type {
-		GREP_SOURCE_SHA1,
+		GREP_SOURCE_OID,
 		GREP_SOURCE_FILE,
 		GREP_SOURCE_BUF,
 	} type;
@@ -143,23 +211,24 @@ struct grep_source {
 	char *buf;
 	unsigned long size;
 
+	char *path; /* for attribute lookups */
 	struct userdiff_driver *driver;
 };
 
 void grep_source_init(struct grep_source *gs, enum grep_source_type type,
-		      const char *name, const void *identifier);
-int grep_source_load(struct grep_source *gs);
+		      const char *name, const char *path,
+		      const void *identifier);
 void grep_source_clear_data(struct grep_source *gs);
 void grep_source_clear(struct grep_source *gs);
-void grep_source_load_driver(struct grep_source *gs);
-int grep_source_is_binary(struct grep_source *gs);
+void grep_source_load_driver(struct grep_source *gs,
+			     struct index_state *istate);
+
 
 int grep_source(struct grep_opt *opt, struct grep_source *gs);
 
-extern struct grep_opt *grep_opt_dup(const struct grep_opt *opt);
-extern int grep_threads_ok(const struct grep_opt *opt);
+struct grep_opt *grep_opt_dup(const struct grep_opt *opt);
+int grep_threads_ok(const struct grep_opt *opt);
 
-#ifndef NO_PTHREADS
 /*
  * Mutex used around access to the attributes machinery if
  * opt->use_threads.  Must be initialized/destroyed by callers!
@@ -179,10 +248,5 @@ static inline void grep_read_unlock(void)
 	if (grep_use_locks)
 		pthread_mutex_unlock(&grep_read_mutex);
 }
-
-#else
-#define grep_read_lock()
-#define grep_read_unlock()
-#endif
 
 #endif

@@ -420,7 +420,7 @@ sleep(1);
 
 sub usage {
 	print STDERR <<END;
-Usage: GIT_DIR=/path/to/.git git cvsexportcommit [-h] [-p] [-v] [-c] [-f] [-u] [-k] [-w cvsworkdir] [-m msgprefix] [ parent ] commit
+usage: GIT_DIR=/path/to/.git git cvsexportcommit [-h] [-p] [-v] [-c] [-f] [-u] [-k] [-w cvsworkdir] [-m msgprefix] [ parent ] commit
 END
 	exit(1);
 }
@@ -431,6 +431,7 @@ END
 sub safe_pipe_capture {
     my @output;
     if (my $pid = open my $child, '-|') {
+	binmode($child, ":crlf");
 	@output = (<$child>);
 	close $child or die join(' ',@_).": $! $?";
     } else {

@@ -28,4 +28,14 @@ test_expect_success 'diff-files does not examine assume-unchanged entries' '
 	test -z "$(git diff-files -- one)"
 '
 
+test_expect_success POSIXPERM 'find-copies-harder is not confused by mode bits' '
+	echo content >exec &&
+	chmod +x exec &&
+	git add exec &&
+	git commit -m exec &&
+	git update-index --assume-unchanged exec &&
+	git diff-files --find-copies-harder -- exec >actual &&
+	test_must_be_empty actual
+'
+
 test_done
