@@ -6,10 +6,9 @@ Updates since v2.23
 
 Backward compatibility note
 
- * Although it is not officially deprecated, "filter-branch" is
-   showing its age and alternatives are available.  From this release,
-   we started to discourage its uses and hint people about
-   filter-repo.
+ * "filter-branch" is showing its age and alternatives are available.
+   From this release, we started to discourage its use and hint
+   people about filter-repo.
 
 UI, Workflows & Features
 
@@ -68,6 +67,16 @@ UI, Workflows & Features
  * A configuration variable tells "git fetch" to write the commit
    graph after finishing.
 
+ * "git add -i" has been taught to show the total number of hunks and
+   the hunks that has been processed so far when showing prompts.
+
+ * "git fetch --jobs=<n>" allowed <n> parallel jobs when fetching
+   submodules, but this did not apply to "git fetch --multiple" that
+   fetches from multiple remote repositories.  It now does.
+
+ * The installation instruction for zsh completion script (in
+   contrib/) has been a bit improved.
+
 
 Performance, Internal Implementation, Development Support etc.
 
@@ -122,6 +131,20 @@ Performance, Internal Implementation, Development Support etc.
    Python 3.
 
  * Update the way build artifacts in t/helper/ directory are ignored.
+
+ * Preparation for SHA-256 upgrade continues.
+
+ * "git log --graph" for an octopus merge is sometimes colored
+   incorrectly, which is demonstrated and documented but not yet
+   fixed.
+
+ * The trace2 output, when sending them to files in a designated
+   directory, can populate the directory with too many files; a
+   mechanism is introduced to set the maximum number of files and
+   discard further logs when the maximum is reached.
+
+ * We have adopted a Code-of-conduct document.
+   (merge 3f9ef874a7 jk/coc later to maint).
 
 
 Fixes since v2.23
@@ -254,6 +277,72 @@ Fixes since v2.23
    directory has been fixed.
    (merge 83e3ad3b12 jt/merge-recursive-symlink-is-not-a-dir-in-way later to maint).
 
+ * The rename detection logic sorts a list of rename source candidates
+   by similarity to pick the best candidate, which means that a tie
+   between sources with the same similarity is broken by the original
+   location in the original candidate list (which is sorted by path).
+   Force the sorting by similarity done with a stable sort, which is
+   not promised by system supplied qsort(3), to ensure consistent
+   results across platforms.
+   (merge 2049b8dc65 js/diff-rename-force-stable-sort later to maint).
+
+ * The code to skip "UTF" and "UTF-" prefix, when computing an advice
+   message, did not work correctly when the prefix was "UTF", which
+   has been fixed.
+   (merge b181676ce9 rs/convert-fix-utf-without-dash later to maint).
+
+ * The author names taken from SVN repositories may have extra leading
+   or trailing whitespaces, which are now munged away.
+   (merge 4ddd4bddb1 tk/git-svn-trim-author-name later to maint).
+
+ * "git rebase -i" showed a wrong HEAD while "reword" open the editor.
+   (merge b0a3186140 pw/rebase-i-show-HEAD-to-reword later to maint).
+
+ * A few simplification and bugfixes to PCRE interface.
+   (merge c581e4a749 ab/pcre-jit-fixes later to maint).
+
+ * PCRE fixes.
+   (merge ff61681b46 cb/pcre1-cleanup later to maint).
+
+ * "git range-diff" segfaulted when diff.noprefix configuration was
+   used, as it blindly expected the patch it internally generates to
+   have the standard a/ and b/ prefixes.  The command now forces the
+   internal patch to be built without any prefix, not to be affected
+   by any end-user configuration.
+   (merge 937b76ed49 js/range-diff-noprefix later to maint).
+
+ * "git stash apply" in a subdirectory of a secondary worktree failed
+   to access the worktree correctly, which has been corrected.
+   (merge dfd557c978 js/stash-apply-in-secondary-worktree later to maint).
+
+ * The merge-recursive machinery is one of the most complex parts of
+   the system that accumulated cruft over time.  This large series
+   cleans up the implementation quite a bit.
+   (merge b657047719 en/merge-recursive-cleanup later to maint).
+
+ * Pretty-printed command line formatter (used in e.g. reporting the
+   command being run by the tracing API) had a bug that lost an
+   argument that is an empty string, which has been corrected.
+   (merge ce2d7ed2fd gs/sq-quote-buf-pretty later to maint).
+
+ * "git range-diff" failed to handle mode-only change, which has been
+   corrected.
+   (merge 2b6a9b13ca tg/range-diff-output-update later to maint).
+
+ * Dev support update.
+   (merge 4f3c1dc5d6 dl/allow-running-cocci-verbosely later to maint).
+
+ * "git format-patch -o <outdir>" did an equivalent of "mkdir <outdir>"
+   not "mkdir -p <outdir>", which was corrected.
+
+ * "git stash save" lost local changes to submodules, which has been
+   corrected.
+   (merge 556895d0c8 jj/stash-reset-only-toplevel later to maint).
+
+ * The atomic push over smart HTTP transport did not work, which has
+   been corrected.
+   (merge 6f1194246a bc/smart-http-atomic-push later to maint).
+
  * Other code cleanup, docfix, build fix, etc.
    (merge d1387d3895 en/fast-import-merge-doc later to maint).
    (merge 1c24a54ea4 bm/repository-layout-typofix later to maint).
@@ -285,3 +374,25 @@ Fixes since v2.23
    (merge 24c681794f ps/my-first-contribution-alphasort later to maint).
    (merge 75b2c15435 cb/do-not-use-test-cmp-with-a later to maint).
    (merge cda0d497e3 bw/submodule-helper-usage-fix later to maint).
+   (merge fe0ed5d5e9 am/visual-studio-config-fix later to maint).
+   (merge 2e09c01232 sg/name-rev-cutoff-underflow-fix later to maint).
+   (merge ddb3c856f3 as/shallow-slab-use-fix later to maint).
+   (merge 71f4960b91 js/mingw-spawn-with-spaces-in-path later to maint).
+   (merge 53d687bf5f ah/cleanups later to maint).
+   (merge f537485fa5 rs/test-remove-useless-debugging-cat later to maint).
+   (merge 11a3d3aadd dl/rev-list-doc-cleanup later to maint).
+   (merge d928a8388a am/t0028-utf16-tests later to maint).
+   (merge b05b40930e dl/t0000-skip-test-test later to maint).
+   (merge 03d3b1297c js/xdiffi-comment-updates later to maint).
+   (merge 57d8f4b4c7 js/doc-stash-save later to maint).
+   (merge 8c1cfd58e3 ta/t1308-typofix later to maint).
+   (merge fa364ad790 bb/utf8-wcwidth-cleanup later to maint).
+   (merge 68b69211b2 bb/compat-util-comment-fix later to maint).
+   (merge 5cc6a4be11 rs/http-push-simplify later to maint).
+   (merge a81e42d235 rs/column-use-utf8-strnwidth later to maint).
+   (merge 062a309d36 rs/remote-curl-use-argv-array later to maint).
+   (merge 3b3c79f6c9 nr/diff-highlight-indent-fix later to maint).
+   (merge 3444ec2eb2 wb/fsmonitor-bitmap-fix later to maint).
+   (merge 10da030ab7 cb/pcre2-chartables-leakfix later to maint).
+   (merge 60e6569a12 js/mingw-needs-hiding-fix later to maint).
+   (merge 52bd3e4657 rl/gitweb-blame-prev-fix later to maint).

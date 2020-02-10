@@ -435,6 +435,7 @@ static int get_importer(struct transport *transport, struct child_process *fasti
 	child_process_init(fastimport);
 	fastimport->in = xdup(helper->out);
 	argv_array_push(&fastimport->args, "fast-import");
+	argv_array_push(&fastimport->args, "--allow-unsafe-features");
 	argv_array_push(&fastimport->args, debug ? "--stats" : "--quiet");
 
 	if (data->bidi_import) {
@@ -853,6 +854,10 @@ static void set_common_push_options(struct transport *transport,
 		if (set_helper_option(transport, TRANS_OPT_PUSH_CERT, "if-asked") != 0)
 			die(_("helper %s does not support --signed=if-asked"), name);
 	}
+
+	if (flags & TRANSPORT_PUSH_ATOMIC)
+		if (set_helper_option(transport, TRANS_OPT_ATOMIC, "true") != 0)
+			die(_("helper %s does not support --atomic"), name);
 
 	if (flags & TRANSPORT_PUSH_OPTIONS) {
 		struct string_list_item *item;

@@ -41,6 +41,9 @@
 #define GRAPH_MIN_SIZE (GRAPH_HEADER_SIZE + 4 * GRAPH_CHUNKLOOKUP_WIDTH \
 			+ GRAPH_FANOUT_SIZE + the_hash_algo->rawsz)
 
+/* Remember to update object flag allocation in object.h */
+#define REACHABLE       (1u<<15)
+
 char *get_commit_graph_filename(const char *obj_dir)
 {
 	char *filename = xstrfmt("%s/info/commit-graph", obj_dir);
@@ -461,7 +464,7 @@ static void prepare_commit_graph_one(struct repository *r, const char *obj_dir)
 /*
  * Return 1 if commit_graph is non-NULL, and 0 otherwise.
  *
- * On the first invocation, this function attemps to load the commit
+ * On the first invocation, this function attempts to load the commit
  * graph if the_repository is configured to have one.
  */
 static int prepare_commit_graph(struct repository *r)
@@ -855,9 +858,6 @@ static void write_graph_chunk_data(struct hashfile *f, int hash_len,
 			die(_("unable to parse commit %s"),
 				oid_to_hex(&(*list)->object.oid));
 		tree = get_commit_tree_oid(*list);
-		if (!tree)
-			die(_("unable to get tree for %s"),
-				oid_to_hex(&(*list)->object.oid));
 		hashwrite(f, tree->hash, hash_len);
 
 		parent = (*list)->parents;
@@ -1030,11 +1030,11 @@ static void add_missing_parents(struct write_commit_graph_context *ctx, struct c
 {
 	struct commit_list *parent;
 	for (parent = commit->parents; parent; parent = parent->next) {
-		if (!(parent->item->object.flags & UNINTERESTING)) {
+		if (!(parent->item->object.flags & REACHABLE)) {
 			ALLOC_GROW(ctx->oids.list, ctx->oids.nr + 1, ctx->oids.alloc);
 			oidcpy(&ctx->oids.list[ctx->oids.nr], &(parent->item->object.oid));
 			ctx->oids.nr++;
-			parent->item->object.flags |= UNINTERESTING;
+			parent->item->object.flags |= REACHABLE;
 		}
 	}
 }
@@ -1052,7 +1052,7 @@ static void close_reachable(struct write_commit_graph_context *ctx)
 		display_progress(ctx->progress, i + 1);
 		commit = lookup_commit(ctx->r, &ctx->oids.list[i]);
 		if (commit)
-			commit->object.flags |= UNINTERESTING;
+			commit->object.flags |= REACHABLE;
 	}
 	stop_progress(&ctx->progress);
 
@@ -1089,7 +1089,7 @@ static void close_reachable(struct write_commit_graph_context *ctx)
 		commit = lookup_commit(ctx->r, &ctx->oids.list[i]);
 
 		if (commit)
-			commit->object.flags &= ~UNINTERESTING;
+			commit->object.flags &= ~REACHABLE;
 	}
 	stop_progress(&ctx->progress);
 }
@@ -1100,7 +1100,7 @@ static void compute_generation_numbers(struct write_commit_graph_context *ctx)
 	struct commit_list *list = NULL;
 
 	if (ctx->report_progress)
-		ctx->progress = start_progress(
+		ctx->progress = start_delayed_progress(
 					_("Computing commit graph generation numbers"),
 					ctx->commits.nr);
 	for (i = 0; i < ctx->commits.nr; i++) {
@@ -1533,8 +1533,8 @@ static int write_commit_graph_file(struct write_commit_graph_context *ctx)
 
 static void split_graph_merge_strategy(struct write_commit_graph_context *ctx)
 {
-	struct commit_graph *g = ctx->r->objects->commit_graph;
-	uint32_t num_commits = ctx->commits.nr;
+	struct commit_graph *g;
+	uint32_t num_commits;
 	uint32_t i;
 
 	int max_commits = 0;
@@ -1542,10 +1542,13 @@ static void split_graph_merge_strategy(struct write_commit_graph_context *ctx)
 
 	if (ctx->split_opts) {
 		max_commits = ctx->split_opts->max_commits;
-		size_mult = ctx->split_opts->size_multiple;
+
+		if (ctx->split_opts->size_multiple)
+			size_mult = ctx->split_opts->size_multiple;
 	}
 
 	g = ctx->r->objects->commit_graph;
+	num_commits = ctx->commits.nr;
 	ctx->num_commit_graphs_after = ctx->num_commit_graphs_before + 1;
 
 	while (g && (g->num_commits <= size_mult * num_commits ||

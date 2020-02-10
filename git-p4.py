@@ -167,6 +167,21 @@ def die(msg):
         sys.stderr.write(msg + "\n")
         sys.exit(1)
 
+def prompt(prompt_text):
+    """ Prompt the user to choose one of the choices
+
+    Choices are identified in the prompt_text by square brackets around
+    a single letter option.
+    """
+    choices = set(m.group(1) for m in re.finditer(r"\[(.)\]", prompt_text))
+    while True:
+        response = raw_input(prompt_text).strip().lower()
+        if not response:
+            continue
+        response = response[0]
+        if response in choices:
+            return response
+
 def write_pipe(c, stdin):
     if verbose:
         sys.stderr.write('Writing pipe: %s\n' % str(c))
@@ -1160,13 +1175,11 @@ class LargeFileSystem(object):
             if contentsSize <= gitConfigInt('git-p4.largeFileCompressedThreshold'):
                 return False
             contentTempFile = self.generateTempFile(contents)
-            compressedContentFile = tempfile.NamedTemporaryFile(prefix='git-p4-large-file', delete=False)
-            zf = zipfile.ZipFile(compressedContentFile.name, mode='w')
-            zf.write(contentTempFile, compress_type=zipfile.ZIP_DEFLATED)
-            zf.close()
-            compressedContentsSize = zf.infolist()[0].compress_size
+            compressedContentFile = tempfile.NamedTemporaryFile(prefix='git-p4-large-file', delete=True)
+            with zipfile.ZipFile(compressedContentFile, mode='w') as zf:
+                zf.write(contentTempFile, compress_type=zipfile.ZIP_DEFLATED)
+                compressedContentsSize = zf.infolist()[0].compress_size
             os.remove(contentTempFile)
-            os.remove(compressedContentFile.name)
             if compressedContentsSize > gitConfigInt('git-p4.largeFileCompressedThreshold'):
                 return True
         return False
@@ -1259,9 +1272,15 @@ class GitLFS(LargeFileSystem):
             pointerFile = re.sub(r'Git LFS pointer for.*\n\n', '', pointerFile)
 
         oid = re.search(r'^oid \w+:(\w+)', pointerFile, re.MULTILINE).group(1)
+        # if someone use external lfs.storage ( not in local repo git )
+        lfs_path = gitConfig('lfs.storage')
+        if not lfs_path:
+            lfs_path = 'lfs'
+        if not os.path.isabs(lfs_path):
+            lfs_path = os.path.join(os.getcwd(), '.git', lfs_path)
         localLargeFile = os.path.join(
-            os.getcwd(),
-            '.git', 'lfs', 'objects', oid[:2], oid[2:4],
+            lfs_path,
+            'objects', oid[:2], oid[2:4],
             oid,
         )
         # LFS Spec states that pointer files should not have the executable bit set.
@@ -1780,12 +1799,11 @@ class P4Submit(Command, P4UserMap):
         if os.stat(template_file).st_mtime > mtime:
             return True
 
-        while True:
-            response = raw_input("Submit template unchanged. Submit anyway? [y]es, [n]o (skip this patch) ")
-            if response == 'y':
-                return True
-            if response == 'n':
-                return False
+        response = prompt("Submit template unchanged. Submit anyway? [y]es, [n]o (skip this patch) ")
+        if response == 'y':
+            return True
+        if response == 'n':
+            return False
 
     def get_diff_description(self, editedFiles, filesToAdd, symlinks):
         # diff
@@ -2347,31 +2365,22 @@ class P4Submit(Command, P4UserMap):
                           " --prepare-p4-only")
                     break
                 if i < last:
-                    quit = False
-                    while True:
-                        # prompt for what to do, or use the option/variable
-                        if self.conflict_behavior == "ask":
-                            print("What do you want to do?")
-                            response = raw_input("[s]kip this commit but apply"
-                                                 " the rest, or [q]uit? ")
-                            if not response:
-                                continue
-                        elif self.conflict_behavior == "skip":
-                            response = "s"
-                        elif self.conflict_behavior == "quit":
-                            response = "q"
-                        else:
-                            die("Unknown conflict_behavior '%s'" %
-                                self.conflict_behavior)
+                    # prompt for what to do, or use the option/variable
+                    if self.conflict_behavior == "ask":
+                        print("What do you want to do?")
+                        response = prompt("[s]kip this commit but apply the rest, or [q]uit? ")
+                    elif self.conflict_behavior == "skip":
+                        response = "s"
+                    elif self.conflict_behavior == "quit":
+                        response = "q"
+                    else:
+                        die("Unknown conflict_behavior '%s'" %
+                            self.conflict_behavior)
 
-                        if response[0] == "s":
-                            print("Skipping this commit, but applying the rest")
-                            break
-                        if response[0] == "q":
-                            print("Quitting")
-                            quit = True
-                            break
-                    if quit:
+                    if response == "s":
+                        print("Skipping this commit, but applying the rest")
+                    if response == "q":
+                        print("Quitting")
                         break
 
         chdir(self.oldWorkingDirectory)
@@ -3525,8 +3534,9 @@ class P4Sync(Command, P4UserMap):
         self.updateOptionDict(details)
         try:
             self.commit(details, self.extractFilesFromCommit(details), self.branch)
-        except IOError:
+        except IOError as err:
             print("IO error with git fast-import. Is your git version recent enough?")
+            print("IO error details: {}".format(err))
             print(self.gitError.read())
 
     def openStreams(self):
@@ -4141,7 +4151,12 @@ def main():
                                    description = cmd.description,
                                    formatter = HelpFormatter())
 
-    (cmd, args) = parser.parse_args(sys.argv[2:], cmd);
+    try:
+        (cmd, args) = parser.parse_args(sys.argv[2:], cmd);
+    except:
+        parser.print_help()
+        raise
+
     global verbose
     verbose = cmd.verbose
     if cmd.needsGit:

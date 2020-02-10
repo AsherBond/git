@@ -1,4 +1,4 @@
-/RIGHT { /* Technically just supposed to be a slash */
+/ { RIGHT /* Technically just supposed to be a slash and brace */
 	#size-cells = <1>;
 
 	ChangeMe = <0xffeedd00>;

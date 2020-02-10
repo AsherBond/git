@@ -64,6 +64,7 @@ static struct string_list push_options_config = STRING_LIST_INIT_DUP;
 static const char *map_refspec(const char *ref,
 			       struct remote *remote, struct ref *local_refs)
 {
+	const char *branch_name;
 	struct ref *matched = NULL;
 
 	/* Does "ref" uniquely name our ref? */
@@ -84,8 +85,8 @@ static const char *map_refspec(const char *ref,
 	}
 
 	if (push_default == PUSH_DEFAULT_UPSTREAM &&
-	    starts_with(matched->name, "refs/heads/")) {
-		struct branch *branch = branch_get(matched->name + 11);
+	    skip_prefix(matched->name, "refs/heads/", &branch_name)) {
+		struct branch *branch = branch_get(branch_name);
 		if (branch->merge_nr == 1 && branch->merge[0]->src) {
 			struct strbuf buf = STRBUF_INIT;
 			strbuf_addf(&buf, "%s:%s",
@@ -143,8 +144,8 @@ static int push_url_of_remote(struct remote *remote, const char ***url_p)
 	return remote->url_nr;
 }
 
-static NORETURN int die_push_simple(struct branch *branch,
-				    struct remote *remote)
+static NORETURN void die_push_simple(struct branch *branch,
+				     struct remote *remote)
 {
 	/*
 	 * There's no point in using shorten_unambiguous_ref here,
@@ -357,8 +358,10 @@ static int push_with_options(struct transport *transport, struct refspec *rs,
 
 	if (verbosity > 0)
 		fprintf(stderr, _("Pushing to %s\n"), transport->url);
+	trace2_region_enter("push", "transport_push", the_repository);
 	err = transport_push(the_repository, transport,
 			     rs, flags, &reject_reasons);
+	trace2_region_leave("push", "transport_push", the_repository);
 	if (err != 0) {
 		fprintf(stderr, "%s", push_get_color(PUSH_COLOR_ERROR));
 		error(_("failed to push some refs to '%s'"), transport->url);

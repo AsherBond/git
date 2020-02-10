@@ -32,7 +32,7 @@ test_expect_success 'list refs with git:// using protocol v2' '
 	test_cmp expect actual
 '
 
-test_expect_success 'ref advertisment is filtered with ls-remote using protocol v2' '
+test_expect_success 'ref advertisement is filtered with ls-remote using protocol v2' '
 	test_when_finished "rm -f log" &&
 
 	GIT_TRACE_PACKET="$(pwd)/log" git -c protocol.version=2 \
@@ -154,7 +154,7 @@ test_expect_success 'list refs with file:// using protocol v2' '
 	test_cmp expect actual
 '
 
-test_expect_success 'ref advertisment is filtered with ls-remote using protocol v2' '
+test_expect_success 'ref advertisement is filtered with ls-remote using protocol v2' '
 	test_when_finished "rm -f log" &&
 
 	GIT_TRACE_PACKET="$(pwd)/log" git -c protocol.version=2 \
@@ -225,7 +225,7 @@ test_expect_success 'fetch with file:// using protocol v2' '
 	grep "fetch< version 2" log
 '
 
-test_expect_success 'ref advertisment is filtered during fetch using protocol v2' '
+test_expect_success 'ref advertisement is filtered during fetch using protocol v2' '
 	test_when_finished "rm -f log" &&
 
 	test_commit -C file_parent three &&
@@ -665,6 +665,18 @@ test_expect_success 'fetch from namespaced repo respects namespaces' '
 	test_cmp expect actual
 '
 
+test_expect_success 'ls-remote with v2 http sends only one POST' '
+	test_when_finished "rm -f log" &&
+
+	git ls-remote "$HTTPD_DOCUMENT_ROOT_PATH/http_parent" >expect &&
+	GIT_TRACE_CURL="$(pwd)/log" git -c protocol.version=2 \
+		ls-remote "$HTTPD_URL/smart/http_parent" >actual &&
+	test_cmp expect actual &&
+
+	grep "Send header: POST" log >posts &&
+	test_line_count = 1 posts
+'
+
 test_expect_success 'push with http:// and a config of v2 does not request v2' '
 	test_when_finished "rm -f log" &&
 	# Till v2 for push is designed, make sure that if a client has
@@ -682,9 +694,9 @@ test_expect_success 'push with http:// and a config of v2 does not request v2' '
 	git -C "$HTTPD_DOCUMENT_ROOT_PATH/http_parent" log -1 --format=%s client_branch >expect &&
 	test_cmp expect actual &&
 
-	# Client didnt request to use protocol v2
+	# Client did not request to use protocol v2
 	! grep "Git-Protocol: version=2" log &&
-	# Server didnt respond using protocol v2
+	# Server did not respond using protocol v2
 	! grep "git< version 2" log
 '
 

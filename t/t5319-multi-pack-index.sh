@@ -28,6 +28,20 @@ midx_read_expect () {
 	test_cmp expect actual
 }
 
+test_expect_success 'setup' '
+	test_oid_init &&
+	test_oid_cache <<-EOF
+	idxoff sha1:2999
+	idxoff sha256:3739
+
+	packnameoff sha1:652
+	packnameoff sha256:940
+
+	fanoutoff sha1:1
+	fanoutoff sha256:3
+	EOF
+'
+
 test_expect_success 'write midx with no packs' '
 	test_when_finished rm -f pack/multi-pack-index &&
 	git multi-pack-index --object-dir=. write &&
@@ -147,6 +161,21 @@ test_expect_success 'write midx with two packs' '
 
 compare_results_with_midx "two packs"
 
+test_expect_success 'write progress off for redirected stderr' '
+	git multi-pack-index --object-dir=$objdir write 2>err &&
+	test_line_count = 0 err
+'
+
+test_expect_success 'write force progress on for stderr' '
+	git multi-pack-index --object-dir=$objdir --progress write 2>err &&
+	test_file_not_empty err
+'
+
+test_expect_success 'write with the --no-progress option' '
+	git multi-pack-index --object-dir=$objdir --no-progress write 2>err &&
+	test_line_count = 0 err
+'
+
 test_expect_success 'add more packs' '
 	for j in $(test_seq 11 20)
 	do
@@ -167,6 +196,21 @@ compare_results_with_midx "twelve packs"
 
 test_expect_success 'verify multi-pack-index success' '
 	git multi-pack-index verify --object-dir=$objdir
+'
+
+test_expect_success 'verify progress off for redirected stderr' '
+	git multi-pack-index verify --object-dir=$objdir 2>err &&
+	test_line_count = 0 err
+'
+
+test_expect_success 'verify force progress on for stderr' '
+	git multi-pack-index verify --object-dir=$objdir --progress 2>err &&
+	test_file_not_empty err
+'
+
+test_expect_success 'verify with the --no-progress option' '
+	git multi-pack-index verify --object-dir=$objdir --no-progress 2>err &&
+	test_line_count = 0 err
 '
 
 # usage: corrupt_midx_and_verify <pos> <data> <objdir> <string>
@@ -195,7 +239,7 @@ test_expect_success 'verify bad signature' '
 		"multi-pack-index signature"
 '
 
-HASH_LEN=20
+HASH_LEN=$(test_oid rawsz)
 NUM_OBJECTS=74
 MIDX_BYTE_VERSION=4
 MIDX_BYTE_OID_VERSION=5
@@ -208,9 +252,9 @@ MIDX_CHUNK_LOOKUP_WIDTH=12
 MIDX_OFFSET_PACKNAMES=$(($MIDX_HEADER_SIZE + \
 			 $MIDX_NUM_CHUNKS * $MIDX_CHUNK_LOOKUP_WIDTH))
 MIDX_BYTE_PACKNAME_ORDER=$(($MIDX_OFFSET_PACKNAMES + 2))
-MIDX_OFFSET_OID_FANOUT=$(($MIDX_OFFSET_PACKNAMES + 652))
+MIDX_OFFSET_OID_FANOUT=$(($MIDX_OFFSET_PACKNAMES + $(test_oid packnameoff)))
 MIDX_OID_FANOUT_WIDTH=4
-MIDX_BYTE_OID_FANOUT_ORDER=$((MIDX_OFFSET_OID_FANOUT + 250 * $MIDX_OID_FANOUT_WIDTH + 1))
+MIDX_BYTE_OID_FANOUT_ORDER=$((MIDX_OFFSET_OID_FANOUT + 250 * $MIDX_OID_FANOUT_WIDTH + $(test_oid fanoutoff)))
 MIDX_OFFSET_OID_LOOKUP=$(($MIDX_OFFSET_OID_FANOUT + 256 * $MIDX_OID_FANOUT_WIDTH))
 MIDX_BYTE_OID_LOOKUP=$(($MIDX_OFFSET_OID_LOOKUP + 16 * $HASH_LEN))
 MIDX_OFFSET_OBJECT_OFFSETS=$(($MIDX_OFFSET_OID_LOOKUP + $NUM_OBJECTS * $HASH_LEN))
@@ -274,14 +318,29 @@ test_expect_success 'verify incorrect pack-int-id' '
 '
 
 test_expect_success 'verify incorrect offset' '
-	corrupt_midx_and_verify $MIDX_BYTE_OFFSET "\07" $objdir \
+	corrupt_midx_and_verify $MIDX_BYTE_OFFSET "\377" $objdir \
 		"incorrect object offset"
 '
 
 test_expect_success 'git-fsck incorrect offset' '
-	corrupt_midx_and_verify $MIDX_BYTE_OFFSET "\07" $objdir \
+	corrupt_midx_and_verify $MIDX_BYTE_OFFSET "\377" $objdir \
 		"incorrect object offset" \
 		"git -c core.multipackindex=true fsck"
+'
+
+test_expect_success 'repack progress off for redirected stderr' '
+	git multi-pack-index --object-dir=$objdir repack 2>err &&
+	test_line_count = 0 err
+'
+
+test_expect_success 'repack force progress on for stderr' '
+	git multi-pack-index --object-dir=$objdir --progress repack 2>err &&
+	test_file_not_empty err
+'
+
+test_expect_success 'repack with the --no-progress option' '
+	git multi-pack-index --object-dir=$objdir --no-progress repack 2>err &&
+	test_line_count = 0 err
 '
 
 test_expect_success 'repack removes multi-pack-index' '
@@ -342,7 +401,7 @@ test_expect_success 'force some 64-bit offsets with pack-objects' '
 	pack64=$(git pack-objects --index-version=2,0x40 objects64/pack/test-64 <obj-list) &&
 	idx64=objects64/pack/test-64-$pack64.idx &&
 	chmod u+w $idx64 &&
-	corrupt_data $idx64 2999 "\02" &&
+	corrupt_data $idx64 $(test_oid idxoff) "\02" &&
 	midx64=$(git multi-pack-index --object-dir=objects64 write) &&
 	midx_read_expect 1 63 5 objects64 " large-offsets"
 '
@@ -410,6 +469,30 @@ test_expect_success 'expire does not remove any packs' '
 		git multi-pack-index expire &&
 		ls .git/objects/pack >actual &&
 		test_cmp expect actual
+	)
+'
+
+test_expect_success 'expire progress off for redirected stderr' '
+	(
+		cd dup &&
+		git multi-pack-index expire 2>err &&
+		test_line_count = 0 err
+	)
+'
+
+test_expect_success 'expire force progress on for stderr' '
+	(
+		cd dup &&
+		git multi-pack-index --progress expire 2>err &&
+		test_file_not_empty err
+	)
+'
+
+test_expect_success 'expire with the --no-progress option' '
+	(
+		cd dup &&
+		git multi-pack-index --no-progress expire 2>err &&
+		test_line_count = 0 err
 	)
 '
 

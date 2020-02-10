@@ -11,7 +11,7 @@ D=$(pwd)
 
 test_bundle_object_count () {
 	git verify-pack -v "$1" >verify.out &&
-	test "$2" = $(grep '^[0-9a-f]\{40\} ' verify.out | wc -l)
+	test "$2" = $(grep "^$OID_REGEX " verify.out | wc -l)
 }
 
 convert_bundle_to_pack () {
@@ -174,6 +174,30 @@ test_expect_success 'fetch --prune --tags with refspec prunes based on refspec' 
 	git rev-parse sometag
 '
 
+test_expect_success '--refmap="" ignores configured refspec' '
+	cd "$TRASH_DIRECTORY" &&
+	git clone "$D" remote-refs &&
+	git -C remote-refs rev-parse remotes/origin/master >old &&
+	git -C remote-refs update-ref refs/remotes/origin/master master~1 &&
+	git -C remote-refs rev-parse remotes/origin/master >new &&
+	git -C remote-refs fetch --refmap= origin "+refs/heads/*:refs/hidden/origin/*" &&
+	git -C remote-refs rev-parse remotes/origin/master >actual &&
+	test_cmp new actual &&
+	git -C remote-refs fetch origin &&
+	git -C remote-refs rev-parse remotes/origin/master >actual &&
+	test_cmp old actual
+'
+
+test_expect_success '--refmap="" and --prune' '
+	git -C remote-refs update-ref refs/remotes/origin/foo/otherbranch master &&
+	git -C remote-refs update-ref refs/hidden/foo/otherbranch master &&
+	git -C remote-refs fetch --prune --refmap="" origin +refs/heads/*:refs/hidden/* &&
+	git -C remote-refs rev-parse remotes/origin/foo/otherbranch &&
+	test_must_fail git -C remote-refs rev-parse refs/hidden/foo/otherbranch &&
+	git -C remote-refs fetch --prune origin &&
+	test_must_fail git -C remote-refs rev-parse remotes/origin/foo/otherbranch
+'
+
 test_expect_success 'fetch tags when there is no tags' '
 
     cd "$D" &&
@@ -261,9 +285,10 @@ test_expect_success 'create bundle 1' '
 '
 
 test_expect_success 'header of bundle looks right' '
+	head -n 4 "$D"/bundle1 &&
 	head -n 1 "$D"/bundle1 | grep "^#" &&
-	head -n 2 "$D"/bundle1 | grep "^-[0-9a-f]\{40\} " &&
-	head -n 3 "$D"/bundle1 | grep "^[0-9a-f]\{40\} " &&
+	head -n 2 "$D"/bundle1 | grep "^-$OID_REGEX " &&
+	head -n 3 "$D"/bundle1 | grep "^$OID_REGEX " &&
 	head -n 4 "$D"/bundle1 | grep "^$"
 '
 
@@ -289,7 +314,7 @@ test_expect_success 'bundle 1 has only 3 files ' '
 test_expect_success 'unbundle 2' '
 	cd "$D/bundle" &&
 	git fetch ../bundle2 master:master &&
-	test "tip" = "$(git log -1 --pretty=oneline master | cut -b42-)"
+	test "tip" = "$(git log -1 --pretty=oneline master | cut -d" " -f2)"
 '
 
 test_expect_success 'bundle does not prerequisite objects' '
@@ -579,6 +604,22 @@ test_expect_success 'fetch.writeCommitGraph' '
 	(
 		cd write &&
 		git -c fetch.writeCommitGraph fetch origin &&
+		test_path_is_file .git/objects/info/commit-graphs/commit-graph-chain
+	)
+'
+
+test_expect_success 'fetch.writeCommitGraph with submodules' '
+	git clone dups super &&
+	(
+		cd super &&
+		git submodule add "file://$TRASH_DIRECTORY/three" &&
+		git commit -m "add submodule"
+	) &&
+	git clone "super" super-clone &&
+	(
+		cd super-clone &&
+		rm -rf .git/objects/info &&
+		git -c fetch.writeCommitGraph=true fetch origin &&
 		test_path_is_file .git/objects/info/commit-graphs/commit-graph-chain
 	)
 '

@@ -156,9 +156,9 @@ test_expect_success 'submodule add to .gitignored path fails' '
 	(
 		cd addtest-ignore &&
 		cat <<-\EOF >expect &&
-		The following path is ignored by one of your .gitignore files:
+		The following paths are ignored by one of your .gitignore files:
 		submod
-		Use -f if you really want to add it.
+		Use -f if you really want to add them.
 		EOF
 		# Does not use test_commit due to the ignore
 		echo "*" > .gitignore &&
@@ -188,6 +188,17 @@ test_expect_success 'submodule add to reconfigure existing submodule with --forc
 		git submodule add --force "$submodurl" submod &&
 		test "$submodurl" = "$(git config -f .gitmodules submodule.submod.url)" &&
 		test "$submodurl" = "$(git config submodule.submod.url)"
+	)
+'
+
+test_expect_success 'submodule add relays add --dry-run stderr' '
+	test_when_finished "rm -rf addtest/.git/index.lock" &&
+	(
+		cd addtest &&
+		: >.git/index.lock &&
+		! git submodule add "$submodurl" sub-while-locked 2>output.err &&
+		test_i18ngrep "^fatal: .*index\.lock" output.err &&
+		test_path_is_missing sub-while-locked
 	)
 '
 
@@ -354,6 +365,28 @@ EOF
 test_expect_success 'status should only print one line' '
 	git submodule status >lines &&
 	test_line_count = 1 lines
+'
+
+test_expect_success 'status from subdirectory should have the same SHA1' '
+	test_when_finished "rmdir addtest/subdir" &&
+	(
+		cd addtest &&
+		mkdir subdir &&
+		git submodule status >output &&
+		awk "{print \$1}" <output >expect &&
+		cd subdir &&
+		git submodule status >../output &&
+		awk "{print \$1}" <../output >../actual &&
+		test_cmp ../expect ../actual &&
+		git -C ../submod checkout HEAD^ &&
+		git submodule status >../output &&
+		awk "{print \$1}" <../output >../actual2 &&
+		cd .. &&
+		git submodule status >output &&
+		awk "{print \$1}" <output >expect2 &&
+		test_cmp expect2 actual2 &&
+		! test_cmp actual actual2
+	)
 '
 
 test_expect_success 'setup - fetch commit name from submodule' '
@@ -527,7 +560,6 @@ test_expect_success 'update --init' '
 	test_must_fail git config submodule.example.url &&
 
 	git submodule update init 2> update.out &&
-	cat update.out &&
 	test_i18ngrep "not initialized" update.out &&
 	test_must_fail git rev-parse --resolve-git-dir init/.git &&
 
@@ -545,7 +577,6 @@ test_expect_success 'update --init from subdirectory' '
 	(
 		cd sub &&
 		git submodule update ../init 2>update.out &&
-		cat update.out &&
 		test_i18ngrep "not initialized" update.out &&
 		test_must_fail git rev-parse --resolve-git-dir ../init/.git &&
 

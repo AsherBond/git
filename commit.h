@@ -132,7 +132,7 @@ const void *repo_get_commit_buffer(struct repository *r,
 #endif
 
 /*
- * Tell the commit subsytem that we are done with a particular commit buffer.
+ * Tell the commit subsystem that we are done with a particular commit buffer.
  * The commit and buffer should be the input and return value, respectively,
  * from an earlier call to get_commit_buffer.  The buffer may or may not be
  * freed by this call; callers should not access the memory afterwards.
@@ -383,8 +383,18 @@ int compare_commits_by_author_date(const void *a_, const void *b_, void *unused)
  * Verify a single commit with check_commit_signature() and die() if it is not
  * a good signature. This isn't really suitable for general use, but is a
  * helper to implement consistent logic for pull/merge --verify-signatures.
+ *
+ * The check_trust parameter is meant for backward-compatibility.  The GPG
+ * interface verifies key trust with a default trust level that is below the
+ * default trust level for merge operations.  Its value should be non-zero if
+ * the user hasn't set a minimum trust level explicitly in their configuration.
+ *
+ * If the user has set a minimum trust level, then that value should be obeyed
+ * and check_trust should be zero, even if the configured trust level is below
+ * the default trust level for merges.
  */
-void verify_merge_signature(struct commit *commit, int verbose);
+void verify_merge_signature(struct commit *commit, int verbose,
+			    int check_trust);
 
 int compare_commits_by_commit_date(const void *a_, const void *b_, void *unused);
 int compare_commits_by_gen_then_commit_date(const void *a_, const void *b_, void *unused);

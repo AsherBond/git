@@ -378,7 +378,7 @@ test_expect_success '__gitdir - finds repo' '
 '
 
 
-test_expect_success '__gitdir - returns error when cant find repo' '
+test_expect_success '__gitdir - returns error when cannot find repo' '
 	(
 		__git_dir="non-existing" &&
 		test_must_fail __gitdir >"$actual"
@@ -945,7 +945,7 @@ test_expect_success 'setup for filtering matching refs' '
 	rm -f .git/FETCH_HEAD
 '
 
-test_expect_success '__git_refs - dont filter refs unless told so' '
+test_expect_success '__git_refs - do not filter refs unless told so' '
 	cat >expected <<-EOF &&
 	HEAD
 	master
@@ -1257,7 +1257,7 @@ test_path_completion ()
 		# In the following tests calling this function we only
 		# care about how __git_complete_index_file() deals with
 		# unusual characters in path names.  By requesting only
-		# untracked files we dont have to bother adding any
+		# untracked files we do not have to bother adding any
 		# paths to the index in those tests.
 		__git_complete_index_file --others &&
 		print_comp
@@ -1363,6 +1363,63 @@ test_expect_success 'teardown after path completion tests' '
 	       BS\\dir '$'separators\034in\035dir''
 '
 
+test_expect_success '__git_find_on_cmdline - single match' '
+	echo list >expect &&
+	(
+		words=(git command --opt list) &&
+		cword=${#words[@]} &&
+		__git_find_on_cmdline "add list remove" >actual
+	) &&
+	test_cmp expect actual
+'
+
+test_expect_success '__git_find_on_cmdline - multiple matches' '
+	echo remove >expect &&
+	(
+		words=(git command -o --opt remove list add) &&
+		cword=${#words[@]} &&
+		__git_find_on_cmdline "add list remove" >actual
+	) &&
+	test_cmp expect actual
+'
+
+test_expect_success '__git_find_on_cmdline - no match' '
+	(
+		words=(git command --opt branch) &&
+		cword=${#words[@]} &&
+		__git_find_on_cmdline "add list remove" >actual
+	) &&
+	test_must_be_empty actual
+'
+
+test_expect_success '__git_find_on_cmdline - single match with index' '
+	echo "3 list" >expect &&
+	(
+		words=(git command --opt list) &&
+		cword=${#words[@]} &&
+		__git_find_on_cmdline --show-idx "add list remove" >actual
+	) &&
+	test_cmp expect actual
+'
+
+test_expect_success '__git_find_on_cmdline - multiple matches with index' '
+	echo "4 remove" >expect &&
+	(
+		words=(git command -o --opt remove list add) &&
+		cword=${#words[@]} &&
+		__git_find_on_cmdline --show-idx "add list remove" >actual
+	) &&
+	test_cmp expect actual
+'
+
+test_expect_success '__git_find_on_cmdline - no match with index' '
+	(
+		words=(git command --opt branch) &&
+		cword=${#words[@]} &&
+		__git_find_on_cmdline --show-idx "add list remove" >actual
+	) &&
+	test_must_be_empty actual
+'
 
 test_expect_success '__git_get_config_variables' '
 	cat >expect <<-EOF &&
@@ -1438,6 +1495,8 @@ test_expect_success 'double dash "git checkout"' '
 	--no-guess Z
 	--no-... Z
 	--overlay Z
+	--pathspec-file-nul Z
+	--pathspec-from-file=Z
 	EOF
 '
 
@@ -1548,7 +1607,10 @@ test_expect_success 'complete tree filename with metacharacters' '
 '
 
 test_expect_success PERL 'send-email' '
-	test_completion "git send-email --cov" "--cover-letter " &&
+	test_completion "git send-email --cov" <<-\EOF &&
+	--cover-from-description=Z
+	--cover-letter Z
+	EOF
 	test_completion "git send-email ma" "master "
 '
 
